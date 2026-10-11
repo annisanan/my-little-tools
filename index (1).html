@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+
+<!-- ▼ iPhone「加入主畫面」後以全螢幕 App 模式開啟（沒有網址列） -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="照片篩選">
+<meta name="format-detection" content="telephone=no">
+<meta name="theme-color" content="#1b1d22">
+<title>照片篩選</title>
+
+<style>
+  :root {
+    --bg: #1b1d22;
+    --panel: #25282f;
+    --line: #343843;
+    --text: #f2f3f5;
+    --muted: #9298a6;
+    --keep: #3ddc97;
+    --drop: #ff5a5f;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", "Helvetica Neue", sans-serif;
+    overscroll-behavior: none;
+  }
+  /* 固定住整個畫面，避免 iOS 橡皮筋回彈 / 頁面被拖動 */
+  body { position: fixed; inset: 0; overflow: hidden; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  img { -webkit-user-drag: none; pointer-events: none; }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+
+  #app {
+    height: 100%; display: flex; flex-direction: column;
+    padding: calc(var(--safe-top) + 10px) 0 calc(var(--safe-bottom) + 14px);
+  }
+
+  /* ── 上方狀態列 ── */
+  .hud { padding: 4px 22px 10px; }
+  .hud-row { display: flex; align-items: baseline; justify-content: space-between; }
+  .hud h1 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: .02em; }
+  .hud .count { font-size: 15px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bar { height: 3px; margin-top: 10px; background: var(--line); border-radius: 3px; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--text); transition: width .3s ease; }
+
+  /* ── 卡片堆疊 ── */
+  .stack {
+    position: relative; flex: 1; min-height: 0;
+    width: calc(100% - 32px); max-width: 460px; margin: 4px auto 0;
+    touch-action: none; /* 讓 pointer 事件完整接管，滑動才會順 */
+  }
+  .card {
+    position: absolute; inset: 0; border-radius: 22px; overflow: hidden;
+    background: linear-gradient(160deg, #394052, #232731);
+    box-shadow: 0 14px 34px rgba(0,0,0,.45);
+    will-change: transform; transform-origin: 50% 90%;
+    backface-visibility: hidden;
+  }
+  .card img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .card .shade { position: absolute; left: 0; right: 0; bottom: 0; height: 32%; background: linear-gradient(transparent, rgba(0,0,0,.62)); }
+  .card .cap { position: absolute; left: 20px; right: 20px; bottom: 18px; font-size: 20px; font-weight: 600; text-shadow: 0 1px 6px rgba(0,0,0,.5); }
+
+  .stamp {
+    position: absolute; top: 30px; padding: 6px 14px; border: 4px solid; border-radius: 10px;
+    font-size: 28px; font-weight: 800; letter-spacing: .06em; opacity: 0; background: rgba(0,0,0,.18);
+  }
+  .stamp.like { left: 22px; color: var(--keep); transform: rotate(-12deg); }
+  .stamp.nope { right: 22px; color: var(--drop); transform: rotate(12deg); }
+
+  /* ── 下方按鈕 ── */
+  .actions { display: flex; align-items: center; justify-content: center; gap: 26px; padding-top: 16px; }
+  .btn {
+    width: 68px; height: 68px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--panel); border: 2px solid var(--line); transition: transform .12s ease, background .12s;
+  }
+  .btn:active { transform: scale(.9); }
+  .btn svg { width: 30px; height: 30px; fill: none; stroke-width: 3.4; stroke-linecap: round; }
+  .btn.drop { border-color: var(--drop); } .btn.drop svg { stroke: var(--drop); }
+  .btn.keep { border-color: var(--keep); } .btn.keep svg { stroke: var(--keep); }
+  .btn.undo { width: 46px; height: 46px; } .btn.undo svg { width: 20px; height: 20px; stroke: var(--muted); stroke-width: 2.6; }
+  .btn:disabled { opacity: .3; pointer-events: none; }
+  .hint { text-align: center; color: var(--muted); font-size: 12.5px; margin-top: 10px; }
+
+  /* ── 結算清單 ── */
+  #summary { display: none; flex: 1; min-height: 0; flex-direction: column; }
+  .done #summary { display: flex; }
+  .done .deck { display: none; }
+  .sum-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 8px 18px 18px; overscroll-behavior: contain; }
+  .sum-scroll h2 { margin: 8px 0 4px; font-size: 26px; }
+  .sum-scroll .stats { margin: 0 0 16px; color: var(--muted); font-size: 15px; }
+  .stats b { font-variant-numeric: tabular-nums; } .stats .g { color: var(--keep); } .stats .r { color: var(--drop); }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .grid figure { margin: 0; border-radius: 14px; overflow: hidden; background: var(--panel); }
+  .grid img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; background: #2d313b; }
+  .grid figure { cursor: pointer; }
+  .grid figcaption { padding: 8px 10px 10px; font-size: 13.5px; line-height: 1.3; }
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  .sum-actions { display: flex; gap: 12px; padding: 12px 18px 0; }
+  .sum-actions button { flex: 1; padding: 15px 0; border-radius: 14px; font-weight: 600; font-size: 16px; background: var(--panel); border: 1px solid var(--line); }
+  .sum-actions button.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+
+  /* ── 放大檢視 ── */
+  #lightbox { position: fixed; inset: 0; z-index: 10; display: none; background: rgba(10,11,14,.94); align-items: center; justify-content: center; padding: calc(var(--safe-top) + 12px) 12px calc(var(--safe-bottom) + 12px); }
+  #lightbox.open { display: flex; }
+  #lightbox img { max-width: 100%; max-height: 100%; border-radius: 12px; }
+
+  /* ── 開始畫面（從相簿選照片） ── */
+  #startScreen { display: none; flex: 1; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 0 28px 6vh; gap: 14px; }
+  .start #startScreen { display: flex; }
+  .start .deck { display: none; }
+  #startScreen h2 { margin: 0; font-size: 28px; }
+  #startScreen p { margin: 0 0 10px; color: var(--muted); font-size: 15px; line-height: 1.6; max-width: 320px; }
+  .big { width: 100%; max-width: 320px; padding: 17px 0; border-radius: 16px; font-size: 17px; font-weight: 650; background: var(--text); color: var(--bg); }
+  .big.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); font-weight: 500; font-size: 15px; padding: 13px 0; }
+  .sum-actions { flex-wrap: wrap; }
+  .sum-actions button { flex: 1 1 calc(50% - 6px); }
+  .sum-actions .wide { flex-basis: 100%; }
+  #lightbox img { pointer-events: auto; -webkit-touch-callout: default; -webkit-user-select: auto; user-select: auto; }
+
+  @media (prefers-reduced-motion: reduce) { .bar i, .btn { transition: none; } }
+</style>
+</head>
+
+<body>
+<div id="app">
+  <div class="deck hud">
+    <div class="hud-row"><h1>照片篩選</h1><span class="count" id="count"></span></div>
+    <div class="bar"><i id="barFill"></i></div>
+  </div>
+
+  <div class="deck stack" id="stack"></div>
+
+  <div class="deck">
+    <div class="actions">
+      <button class="btn drop" id="btnDrop" aria-label="不喜歡 / 刪除">
+        <svg viewBox="0 0 24 24"><path d="M5 5l14 14M19 5L5 19"/></svg>
+      </button>
+      <button class="btn undo" id="btnUndo" aria-label="復原上一張">
+        <svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>
+      </button>
+      <button class="btn keep" id="btnKeep" aria-label="喜歡 / 保留">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>
+      </button>
+    </div>
+    <div class="hint">右滑保留　左滑刪除</div>
+  </div>
+
+  <div id="summary"></div>
+
+  <div id="startScreen">
+    <h2>照片篩選</h2>
+    <p>從 iPhone 相簿選出要整理的照片，再一張一張左滑右滑。照片只在你的手機上處理，不會上傳。</p>
+    <button class="big" id="pickBtn">從相簿選擇照片</button>
+    <button class="big ghost" id="demoBtn">先用範例照片試玩</button>
+  </div>
+  <input type="file" id="picker" accept="image/*" multiple hidden>
+</div>
+
+<div id="lightbox"><img alt=""></div>
+
+<script>
+/* ════════════════════════════════════════════════════════════
+   ★ 範例照片（只有按「先用範例照片試玩」才會用到；平常改用相簿選取） ★
+   ------------------------------------------------------------
+   每一筆資料格式：{ src: '圖片網址或檔名', title: '顯示的標題（可留空 ""）' }
+
+   ① 網路圖片：src 直接貼完整網址，例如 'https://example.com/me.jpg'
+   ② 自己上傳的檔案：把照片和這個 index.html 放在同一個資料夾，
+      例如建立 photos 資料夾，src 就寫 'photos/001.jpg'
+   Unsplash 範例網址後面的 ?w=900&q=80 是縮圖與品質參數，可保留以加快載入。
+   ════════════════════════════════════════════════════════════ */
+const DEMO_PHOTOS = [
+  { src: 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=900&q=80', title: '山谷與湖' },
+  { src: 'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=900&q=80', title: '陽光森林' },
+  { src: 'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=900&q=80', title: '霧中山丘' },
+  { src: 'https://images.unsplash.com/photo-1501785888041-af3ef285b470?w=900&q=80', title: '湖畔山景' },
+  { src: 'https://images.unsplash.com/photo-1472214103451-9374bd1c798e?w=900&q=80', title: '田野晨光' },
+  { src: 'https://images.unsplash.com/photo-1469474968028-56623f02e42e?w=900&q=80', title: '日出山谷' },
+  { src: 'https://images.unsplash.com/photo-1518837695005-2083093ee35b?w=900&q=80', title: '海浪' },
+  { src: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=900&q=80', title: '熱帶海灘' },
+  { src: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?w=900&q=80', title: '山頂雲海' },
+  { src: 'https://images.unsplash.com/photo-1465146344425-f00d5f5c8f07?w=900&q=80', title: '花田' },
+];
+let PHOTOS = DEMO_PHOTOS;
+
+/* ───────── 狀態 ───────── */
+const THRESH = 0.28;               // 拖動超過卡片寬度的 28% 就算滑出
+const $ = s => document.querySelector(s);
+const app = $('#app'), stack = $('#stack');
+let idx = 0, kept = [], history = [];
+let drag = null, animating = false, raf = 0;
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const cardW = () => stack.clientWidth || 340;
+
+/* ───────── 畫面 ───────── */
+function makeCard(i) {
+  const p = PHOTOS[i];
+  const el = document.createElement('div');
+  el.className = 'card';
+  el.innerHTML =
+    `<img src="${esc(p.src)}" alt="" draggable="false">` +
+    `<div class="shade"></div>` +
+    (p.title ? `<div class="cap">${esc(p.title)}</div>` : '') +
+    `<div class="stamp like">保留</div><div class="stamp nope">刪除</div>`;
+  el.querySelector('img').onerror = function () { this.style.display = 'none'; }; // 圖片載入失敗時顯示底色
+  return el;
+}
+
+// 底下的卡片：依深度縮小並下移；p 是頂牌被拖動的進度 (0~1)，讓下一張慢慢「浮上來」
+function applyDepth(card, d, p) {
+  const depth = d === 1 ? 1 - p : d;
+  card.style.transform = `translate3d(0,${depth * 12}px,0) scale(${1 - depth * 0.05})`;
+}
+
+function render() {
+  const N = PHOTOS.length;
+  stack.innerHTML = '';
+  app.classList.remove('start');
+  if (idx >= N) { showSummary(); return; }
+  app.classList.remove('done');
+  for (let d = Math.min(2, N - idx - 1); d >= 0; d--) {
+    const c = makeCard(idx + d);
+    if (d > 0) applyDepth(c, d, 0);
+    stack.appendChild(c);
+  }
+  for (let k = 3; k <= 5; k++) if (PHOTOS[idx + k]) new Image().src = PHOTOS[idx + k].src; // 預載後面幾張
+  $('#count').textContent = `${idx + 1} / ${N}`;
+  $('#barFill').style.width = `${(idx / N) * 100}%`;
+  $('#btnUndo').disabled = history.length === 0;
+}
+
+/* ───────── 拖動 ───────── */
+stack.addEventListener('pointerdown', e => {
+  if (animating || drag) return;
+  const top = stack.lastElementChild;
+  if (!top) return;
+  drag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, dx: 0, dy: 0, lx: e.clientX, lt: e.timeStamp, vx: 0, top };
+  top.style.transition = 'none';
+  stack.setPointerCapture(e.pointerId);
+});
+
+stack.addEventListener('pointermove', e => {
+  if (!drag || e.pointerId !== drag.id) return;
+  drag.dx = e.clientX - drag.sx;
+  drag.dy = e.clientY - drag.sy;
+  const dt = e.timeStamp - drag.lt;
+  if (dt > 0) drag.vx = 0.8 * drag.vx + 0.2 * ((e.clientX - drag.lx) / dt); // px/ms，用來判斷「快速甩動」
+  drag.lx = e.clientX; drag.lt = e.timeStamp;
+  if (!raf) raf = requestAnimationFrame(paint);
+});
+
+function paint() {
+  raf = 0;
+  if (!drag) return;
+  setPose(drag.top, drag.dx, drag.dy);
+}
+
+function setPose(top, dx, dy) {
+  const w = cardW();
+  top.style.transform = `translate3d(${dx}px,${dy}px,0) rotate(${dx / w * 18}deg)`;
+  const p = Math.min(Math.abs(dx) / (w * THRESH), 1);
+  top.querySelector('.like').style.opacity = dx > 0 ? p : 0;
+  top.querySelector('.nope').style.opacity = dx < 0 ? p : 0;
+  const next = stack.children[stack.children.length - 2];
+  if (next) { next.style.transition = 'none'; applyDepth(next, 1, p); }
+}
+
+function release(e) {
+  if (!drag || e.pointerId !== drag.id) return;
+  const d = drag; drag = null;
+  if (raf) { cancelAnimationFrame(raf); raf = 0; }
+  const far = Math.abs(d.dx) > cardW() * THRESH;
+  const fast = Math.abs(d.vx) > 0.6 && Math.abs(d.dx) > 30;
+  if (e.type !== 'pointercancel' && (far || fast)) fly(d.dx > 0 ? 1 : -1, d.dy);
+  else snapBack(d.top);
+}
+stack.addEventListener('pointerup', release);
+stack.addEventListener('pointercancel', release);
+
+function snapBack(top) {
+  top.style.transition = 'transform .32s cubic-bezier(.2,.9,.3,1.25)';
+  top.style.transform = 'translate3d(0,0,0) rotate(0deg)';
+  top.querySelector('.like').style.opacity = 0;
+  top.querySelector('.nope').style.opacity = 0;
+  const next = stack.children[stack.children.length - 2];
+  if (next) { next.style.transition = 'transform .32s ease'; applyDepth(next, 1, 0); }
+}
+
+/* ───────── 飛出 / 確認 / 復原 ───────── */
+function fly(dir, dy = 0) {
+  const top = stack.lastElementChild;
+  if (!top || animating) return;
+  animating = true;
+  const flyBack = dy === 0 ? -24 : dy;
+  top.style.transition = 'transform .38s cubic-bezier(.25,.7,.3,1)';
+  top.style.transform = `translate3d(${dir * cardW() * 1.7}px,${flyBack}px,0) rotate(${dir * 28}deg)`;
+  top.querySelector(dir > 0 ? '.like' : '.nope').style.opacity = 1;
+  const next = stack.children[stack.children.length - 2];
+  if (next) { next.style.transition = 'transform .38s ease'; applyDepth(next, 1, 1); }
+  setTimeout(() => commit(dir), 380);
+}
+
+function commit(dir) {
+  history.push({ i: idx, dir });
+  if (dir > 0) kept.push(idx);
+  idx++;
+  animating = false;
+  render();
+}
+
+function undo() {
+  if (animating || !history.length) return;
+  const last = history.pop();
+  if (last.dir > 0) kept = kept.filter(i => i !== last.i);
+  idx = last.i;
+  render();
+}
+
+$('#btnKeep').onclick = () => fly(1);
+$('#btnDrop').onclick = () => fly(-1);
+$('#btnUndo').onclick = undo;
+document.addEventListener('keydown', e => {       // 電腦測試用：← → 與 Backspace
+  if (e.key === 'ArrowRight') fly(1);
+  else if (e.key === 'ArrowLeft') fly(-1);
+  else if (e.key === 'Backspace') undo();
+});
+
+/* ───────── 開始畫面 / 從相簿選照片 ───────── */
+const picker = $('#picker');
+
+function showStart() { app.classList.remove('done'); app.classList.add('start'); }
+
+function usePhotos(list) {
+  PHOTOS.forEach(p => { if (p.file) URL.revokeObjectURL(p.src); }); // 釋放上一批照片佔用的記憶體
+  PHOTOS = list; idx = 0; kept = []; history = [];
+  render();
+}
+
+$('#pickBtn').onclick = () => picker.click();   // 必須由點擊觸發，iOS 才會開啟相簿
+$('#demoBtn').onclick = () => usePhotos(DEMO_PHOTOS);
+picker.addEventListener('change', () => {
+  const files = [...picker.files].filter(f => !f.type || f.type.startsWith('image/'));
+  picker.value = '';                            // 讓同一批照片可以再選一次
+  if (!files.length) return;
+  usePhotos(files.map(f => ({ src: URL.createObjectURL(f), title: '', name: f.name, file: f })));
+});
+
+/* ───────── 結算清單 ───────── */
+// 清單用縮圖，避免一次載入大量原始大圖造成 iPhone 記憶體不足
+function makeThumb(file) {
+  return new Promise(res => {
+    const u = URL.createObjectURL(file), im = new Image();
+    im.onload = () => {
+      const s = Math.min(1, 480 / Math.max(im.width, im.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(im.width * s); c.height = Math.round(im.height * s);
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(u);
+      res(c.toDataURL('image/jpeg', .8));
+    };
+    im.onerror = () => { URL.revokeObjectURL(u); res(''); };
+    im.src = u;
+  });
+}
+
+function showSummary() {
+  app.classList.remove('start'); app.classList.add('done');
+  const items = kept.map(i => PHOTOS[i]);
+  const hasFiles = items.some(p => p.file);
+  $('#summary').innerHTML =
+    `<div class="sum-scroll">
+       <h2>篩選完成</h2>
+       <p class="stats">保留 <b class="g">${kept.length}</b> 張，刪除 <b class="r">${PHOTOS.length - kept.length}</b> 張</p>
+       ${items.length
+         ? `<div class="grid">${kept.map(i => {
+              const p = PHOTOS[i], cap = p.title || p.name || '';
+              return `<figure data-i="${i}"><img alt="" ${p.file ? '' : `src="${esc(p.src)}"`}>${cap ? `<figcaption>${esc(cap)}</figcaption>` : ''}</figure>`;
+            }).join('')}</div>`
+         : `<p class="empty">這輪沒有保留任何照片。</p>`}
+     </div>
+     <div class="sum-actions">
+       ${hasFiles ? `<button id="saveBtn" class="wide primary">儲存保留的照片到相簿</button>` : ''}
+       <button id="copyBtn">複製清單</button>
+       <button id="againBtn">重新篩選</button>
+       <button id="newBtn" class="wide">換一批照片</button>
+     </div>`;
+
+  // 依序產生縮圖
+  const figs = [...document.querySelectorAll('.grid figure')];
+  (async () => {
+    for (const fig of figs) {
+      const p = PHOTOS[+fig.dataset.i];
+      if (!p.file) continue;
+      const url = await makeThumb(p.file);
+      if (!fig.isConnected) return;
+      fig.querySelector('img').src = url;
+    }
+  })();
+
+  $('#againBtn').onclick = () => { idx = 0; kept = []; history = []; render(); };
+  $('#newBtn').onclick = showStart;
+
+  if ($('#saveBtn')) $('#saveBtn').onclick = async () => {
+    const files = items.filter(p => p.file).map(p => p.file);
+    try {
+      if (navigator.canShare && navigator.canShare({ files })) await navigator.share({ files }); // 跳出分享選單，選「儲存影像」
+      else alert('這個瀏覽器不支援一次儲存多張照片，請點開照片後長按儲存。');
+    } catch (_) { /* 使用者取消分享 */ }
+  };
+
+  $('#copyBtn').onclick = async function () {
+    const text = items.map(p => (p.title || p.name || '') + (p.file ? '' : '\t' + p.src)).join('\n');
+    try { await navigator.clipboard.writeText(text); }
+    catch (_) {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); ta.remove();
+    }
+    this.textContent = '已複製';
+    setTimeout(() => (this.textContent = '複製清單'), 1800);
+  };
+
+  const grid = $('.grid');
+  if (grid) grid.addEventListener('click', e => {
+    const fig = e.target.closest('figure'); if (!fig) return;
+    const lb = $('#lightbox');
+    lb.querySelector('img').src = PHOTOS[+fig.dataset.i].src;
+    lb.classList.add('open');
+  });
+}
+$('#lightbox').onclick = () => $('#lightbox').classList.remove('open');
+
+/* ───────── 主畫面圖示（加入主畫面時使用） ───────── */
+(function makeIcon() {
+  const c = document.createElement('canvas'); c.width = c.height = 180;
+  const g = c.getContext('2d');
+  g.fillStyle = '#25282f'; g.fillRect(0, 0, 180, 180);
+  g.strokeStyle = '#ff5a5f'; g.lineWidth = 14; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(34, 62); g.lineTo(62, 90); g.moveTo(62, 62); g.lineTo(34, 90); g.stroke();
+  g.strokeStyle = '#3ddc97'; g.beginPath(); g.arc(120, 100, 26, 0, Math.PI * 2); g.stroke();
+  const l = document.createElement('link');
+  l.rel = 'apple-touch-icon'; l.href = c.toDataURL('image/png');
+  document.head.appendChild(l);
+})();
+
+showStart();
+</script>
+</body>
+</html>
