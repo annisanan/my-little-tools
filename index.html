@@ -110,6 +110,19 @@
   #lightbox.open { display: flex; }
   #lightbox img { max-width: 100%; max-height: 100%; border-radius: 12px; }
 
+  /* ── 開始畫面（從相簿選照片） ── */
+  #startScreen { display: none; flex: 1; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 0 28px 6vh; gap: 14px; }
+  .start #startScreen { display: flex; }
+  .start .deck { display: none; }
+  #startScreen h2 { margin: 0; font-size: 28px; }
+  #startScreen p { margin: 0 0 10px; color: var(--muted); font-size: 15px; line-height: 1.6; max-width: 320px; }
+  .big { width: 100%; max-width: 320px; padding: 17px 0; border-radius: 16px; font-size: 17px; font-weight: 650; background: var(--text); color: var(--bg); }
+  .big.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); font-weight: 500; font-size: 15px; padding: 13px 0; }
+  .sum-actions { flex-wrap: wrap; }
+  .sum-actions button { flex: 1 1 calc(50% - 6px); }
+  .sum-actions .wide { flex-basis: 100%; }
+  #lightbox img { pointer-events: auto; -webkit-touch-callout: default; -webkit-user-select: auto; user-select: auto; }
+
   @media (prefers-reduced-motion: reduce) { .bar i, .btn { transition: none; } }
 </style>
 </head>
@@ -139,13 +152,21 @@
   </div>
 
   <div id="summary"></div>
+
+  <div id="startScreen">
+    <h2>照片篩選</h2>
+    <p>從 iPhone 相簿選出要整理的照片，再一張一張左滑右滑。照片只在你的手機上處理，不會上傳。</p>
+    <button class="big" id="pickBtn">從相簿選擇照片</button>
+    <button class="big ghost" id="demoBtn">先用範例照片試玩</button>
+  </div>
+  <input type="file" id="picker" accept="image/*" multiple hidden>
 </div>
 
 <div id="lightbox"><img alt=""></div>
 
 <script>
 /* ════════════════════════════════════════════════════════════
-   ★ 在這裡替換成「你自己的照片」 ★
+   ★ 範例照片（只有按「先用範例照片試玩」才會用到；平常改用相簿選取） ★
    ------------------------------------------------------------
    每一筆資料格式：{ src: '圖片網址或檔名', title: '顯示的標題（可留空 ""）' }
 
@@ -154,7 +175,7 @@
       例如建立 photos 資料夾，src 就寫 'photos/001.jpg'
    Unsplash 範例網址後面的 ?w=900&q=80 是縮圖與品質參數，可保留以加快載入。
    ════════════════════════════════════════════════════════════ */
-const PHOTOS = [
+const DEMO_PHOTOS = [
   { src: 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=900&q=80', title: '山谷與湖' },
   { src: 'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=900&q=80', title: '陽光森林' },
   { src: 'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=900&q=80', title: '霧中山丘' },
@@ -166,6 +187,7 @@ const PHOTOS = [
   { src: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?w=900&q=80', title: '山頂雲海' },
   { src: 'https://images.unsplash.com/photo-1465146344425-f00d5f5c8f07?w=900&q=80', title: '花田' },
 ];
+let PHOTOS = DEMO_PHOTOS;
 
 /* ───────── 狀態 ───────── */
 const THRESH = 0.28;               // 拖動超過卡片寬度的 28% 就算滑出
@@ -200,6 +222,7 @@ function applyDepth(card, d, p) {
 function render() {
   const N = PHOTOS.length;
   stack.innerHTML = '';
+  app.classList.remove('start');
   if (idx >= N) { showSummary(); return; }
   app.classList.remove('done');
   for (let d = Math.min(2, N - idx - 1); d >= 0; d--) {
@@ -309,38 +332,103 @@ document.addEventListener('keydown', e => {       // 電腦測試用：← → �
   else if (e.key === 'Backspace') undo();
 });
 
+/* ───────── 開始畫面 / 從相簿選照片 ───────── */
+const picker = $('#picker');
+
+function showStart() { app.classList.remove('done'); app.classList.add('start'); }
+
+function usePhotos(list) {
+  PHOTOS.forEach(p => { if (p.file) URL.revokeObjectURL(p.src); }); // 釋放上一批照片佔用的記憶體
+  PHOTOS = list; idx = 0; kept = []; history = [];
+  render();
+}
+
+$('#pickBtn').onclick = () => picker.click();   // 必須由點擊觸發，iOS 才會開啟相簿
+$('#demoBtn').onclick = () => usePhotos(DEMO_PHOTOS);
+picker.addEventListener('change', () => {
+  const files = [...picker.files].filter(f => !f.type || f.type.startsWith('image/'));
+  picker.value = '';                            // 讓同一批照片可以再選一次
+  if (!files.length) return;
+  usePhotos(files.map(f => ({ src: URL.createObjectURL(f), title: '', name: f.name, file: f })));
+});
+
 /* ───────── 結算清單 ───────── */
+// 清單用縮圖，避免一次載入大量原始大圖造成 iPhone 記憶體不足
+function makeThumb(file) {
+  return new Promise(res => {
+    const u = URL.createObjectURL(file), im = new Image();
+    im.onload = () => {
+      const s = Math.min(1, 480 / Math.max(im.width, im.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(im.width * s); c.height = Math.round(im.height * s);
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(u);
+      res(c.toDataURL('image/jpeg', .8));
+    };
+    im.onerror = () => { URL.revokeObjectURL(u); res(''); };
+    im.src = u;
+  });
+}
+
 function showSummary() {
-  app.classList.add('done');
+  app.classList.remove('start'); app.classList.add('done');
   const items = kept.map(i => PHOTOS[i]);
+  const hasFiles = items.some(p => p.file);
   $('#summary').innerHTML =
     `<div class="sum-scroll">
        <h2>篩選完成</h2>
        <p class="stats">保留 <b class="g">${kept.length}</b> 張，刪除 <b class="r">${PHOTOS.length - kept.length}</b> 張</p>
        ${items.length
-         ? `<div class="grid">${kept.map(i => `<figure data-i="${i}"><img src="${esc(PHOTOS[i].src)}" alt=""><figcaption>${esc(PHOTOS[i].title || PHOTOS[i].src)}</figcaption></figure>`).join('')}</div>`
+         ? `<div class="grid">${kept.map(i => {
+              const p = PHOTOS[i], cap = p.title || p.name || '';
+              return `<figure data-i="${i}"><img alt="" ${p.file ? '' : `src="${esc(p.src)}"`}>${cap ? `<figcaption>${esc(cap)}</figcaption>` : ''}</figure>`;
+            }).join('')}</div>`
          : `<p class="empty">這輪沒有保留任何照片。</p>`}
      </div>
      <div class="sum-actions">
-       <button id="copyBtn">複製保留清單</button>
-       <button id="restartBtn" class="primary">重新開始</button>
+       ${hasFiles ? `<button id="saveBtn" class="wide primary">儲存保留的照片到相簿</button>` : ''}
+       <button id="copyBtn">複製清單</button>
+       <button id="againBtn">重新篩選</button>
+       <button id="newBtn" class="wide">換一批照片</button>
      </div>`;
 
-  $('#restartBtn').onclick = () => { idx = 0; kept = []; history = []; render(); };
+  // 依序產生縮圖
+  const figs = [...document.querySelectorAll('.grid figure')];
+  (async () => {
+    for (const fig of figs) {
+      const p = PHOTOS[+fig.dataset.i];
+      if (!p.file) continue;
+      const url = await makeThumb(p.file);
+      if (!fig.isConnected) return;
+      fig.querySelector('img').src = url;
+    }
+  })();
+
+  $('#againBtn').onclick = () => { idx = 0; kept = []; history = []; render(); };
+  $('#newBtn').onclick = showStart;
+
+  if ($('#saveBtn')) $('#saveBtn').onclick = async () => {
+    const files = items.filter(p => p.file).map(p => p.file);
+    try {
+      if (navigator.canShare && navigator.canShare({ files })) await navigator.share({ files }); // 跳出分享選單，選「儲存影像」
+      else alert('這個瀏覽器不支援一次儲存多張照片，請點開照片後長按儲存。');
+    } catch (_) { /* 使用者取消分享 */ }
+  };
 
   $('#copyBtn').onclick = async function () {
-    const text = items.map(p => (p.title ? p.title + '\t' : '') + p.src).join('\n');
+    const text = items.map(p => (p.title || p.name || '') + (p.file ? '' : '\t' + p.src)).join('\n');
     try { await navigator.clipboard.writeText(text); }
     catch (_) {
       const ta = document.createElement('textarea');
       ta.value = text; document.body.appendChild(ta); ta.select();
       document.execCommand('copy'); ta.remove();
     }
-    this.textContent = '已複製保留清單';
-    setTimeout(() => (this.textContent = '複製保留清單'), 1800);
+    this.textContent = '已複製';
+    setTimeout(() => (this.textContent = '複製清單'), 1800);
   };
 
-  $('.grid') && $('.grid').addEventListener('click', e => {
+  const grid = $('.grid');
+  if (grid) grid.addEventListener('click', e => {
     const fig = e.target.closest('figure'); if (!fig) return;
     const lb = $('#lightbox');
     lb.querySelector('img').src = PHOTOS[+fig.dataset.i].src;
@@ -362,7 +450,7 @@ $('#lightbox').onclick = () => $('#lightbox').classList.remove('open');
   document.head.appendChild(l);
 })();
 
-render();
+showStart();
 </script>
 </body>
 </html>
